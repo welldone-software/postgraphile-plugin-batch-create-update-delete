@@ -2,13 +2,13 @@ import gql, {
   GraphQLSchema,
   GraphQLObjectTypeConfig,
   GraphQLType,
-  GraphQLInputObjectType
-} from 'graphql';
-import sql, { SQL } from 'pg-sql2';
-import { PgClass, PgAttribute, omit } from 'graphile-build-pg';
-import pgField from 'graphile-build-pg/node8plus/plugins/pgField';
-import { Plugin, SchemaBuilder } from 'graphile-build';
-import { parseResolveInfo } from 'graphql-parse-resolve-info';
+  GraphQLInputObjectType,
+} from "graphql";
+import sql, { SQL } from "pg-sql2";
+import { PgClass, PgAttribute, omit } from "graphile-build-pg";
+import pgField from "graphile-build-pg/node8plus/plugins/pgField";
+import { Plugin, SchemaBuilder } from "graphile-build";
+import { parseResolveInfo } from "graphql-parse-resolve-info";
 
 /**
  * Whereas the Build object is the same for all hooks (except the build hook
@@ -84,6 +84,11 @@ export interface Build {
   [str: string]: any;
 }
 
+interface MultipleMutationsPluginOptions {
+  enabled?: boolean;
+  ignore?: Array<string>;
+}
+
 export {
   PgClass,
   PgAttribute,
@@ -92,5 +97,6 @@ export {
   Plugin,
   SchemaBuilder,
   GraphQLType,
-  GraphQLInputObjectType
+  GraphQLInputObjectType,
+  MultipleMutationsPluginOptions,
 };

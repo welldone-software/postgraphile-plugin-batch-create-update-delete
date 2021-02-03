@@ -1,30 +1,26 @@
-import * as T from './pluginTypes';
-import debugFactory from 'debug';
-import { GraphQLList } from 'graphql';
-const debug = debugFactory('graphile-build-pg');
+import * as T from "./pluginTypes";
+import debugFactory from "debug";
+import { omitBy } from "lodash";
+const debug = debugFactory("graphile-build-pg");
+import { createTypeWithoutNestedInputTypes } from "./utils";
 
-const PostGraphileManyUpdatePlugin: T.Plugin = (
-  builder: T.SchemaBuilder,
-  options: any
-) => {
-  if (options.pgDisableDefaultMutations) return;
-
+const PostGraphileManyUpdatePlugin: T.Plugin = (builder: T.SchemaBuilder) => {
   /**
    * Add a hook to create the new root level create mutation
    */
   builder.hook(
     // @ts-ignore
-    'GraphQLObjectType:fields',
+    "GraphQLObjectType:fields",
     GQLObjectFieldsHookHandlerFcn,
-    ['PgMutationManyUpdate'], // hook provides
+    ["PgMutationManyUpdate"], // hook provides
     [], // hook before
-    ['PgMutationUpdateDelete'] // hook after
+    ["PgMutationUpdateDelete"] // hook after
   );
 
   /**
    * Handles adding the new "many update" root level fields
    */
-  function GQLObjectFieldsHookHandlerFcn (
+  function GQLObjectFieldsHookHandlerFcn(
     fields: any,
     build: T.Build,
     context: T.Context
@@ -49,7 +45,8 @@ const PostGraphileManyUpdatePlugin: T.Plugin = (
         GraphQLString,
         GraphQLObjectType,
         GraphQLID,
-        getNamedType
+        getNamedType,
+        GraphQLList,
       },
       pgColumnFilter,
       inflection,
@@ -58,11 +55,11 @@ const PostGraphileManyUpdatePlugin: T.Plugin = (
       pgViaTemporaryTable: viaTemporaryTable,
       describePgEntity,
       sqlCommentByAddingTags,
-      pgField
+      pgField,
     } = build;
     const {
       scope: { isRootMutation },
-      fieldWithHooks
+      fieldWithHooks,
     } = context;
 
     if (!isRootMutation || !pgColumnFilter) return fields;
@@ -74,11 +71,11 @@ const PostGraphileManyUpdatePlugin: T.Plugin = (
       handleAdditionsFromTableInfo(pgIntrospectionResultsByKind.class[i]);
     }
 
-    function handleAdditionsFromTableInfo (table: T.PgClass) {
+    function handleAdditionsFromTableInfo(table: T.PgClass) {
       if (
         !table.namespace ||
         !table.isUpdatable ||
-        omit(table, 'update') ||
+        omit(table, "update") ||
         !table.tags.mncud
       )
         return;
@@ -102,24 +99,32 @@ const PostGraphileManyUpdatePlugin: T.Plugin = (
         );
       }
 
+      /*
+        We need to remove nested mutations plugin types, because nested mutations are not supported in this plugin.
+        But this workaround only will not allow to make both this plugin and nested mutations plugin work together.
+        It is still needed to disable definition of new resolver for mutations created by this plugin in nested mutations plugin
+        using isMultipleMutation flag added for all mutations created by this plugin to context
+      */
+      const newPatchType = createTypeWithoutNestedInputTypes(tablePatch);
+
       const tableTypeName = namedType.name;
       const uniqueConstraints = table.constraints.filter(
-        con => con.type === 'p'
+        (con) => con.type === "p"
       );
 
       // Setup and add the GraphQL Payload type
       const newPayloadHookType = GraphQLObjectType;
       const newPayloadHookSpec = {
-        name: `mn${inflection.updatePayloadType(table)}`,
+        name: `Update${inflection.pluralize(tableTypeName)}Payload`,
         description: `The output of our update mn \`${tableTypeName}\` mutation.`,
         fields: ({ fieldWithHooks }) => {
           const tableName = inflection.tableFieldName(table);
           return {
             clientMutationId: {
               description:
-                'The exact same `clientMutationId` that was provided in the mutation input,\
-                 unchanged and unused. May be used by a client to track mutations.',
-              type: GraphQLString
+                "The exact same `clientMutationId` that was provided in the mutation input,\
+                 unchanged and unused. May be used by a client to track mutations.",
+              type: GraphQLString,
             },
             [tableName]: pgField(
               build,
@@ -127,13 +132,13 @@ const PostGraphileManyUpdatePlugin: T.Plugin = (
               tableName,
               {
                 description: `The \`${tableTypeName}\` that was updated by this mutation.`,
-                type: tableType
+                type: new GraphQLList(new GraphQLNonNull(tableType)),
               },
               {},
               false
-            )
+            ),
           };
-        }
+        },
       };
       const newPayloadHookScope = {
         __origin: `Adding table many update mutation payload type for ${describePgEntity(
@@ -141,11 +146,11 @@ const PostGraphileManyUpdatePlugin: T.Plugin = (
         )}.
                    You can rename the table's GraphQL type via a 'Smart Comment':\n\n
                    ${sqlCommentByAddingTags(table, {
-                     name: 'newNameHere'
+                     name: "newNameHere",
                    })}`,
         isMutationPayload: true,
         isPgUpdatePayloadType: true,
-        pgIntrospection: table
+        pgIntrospection: table,
       };
       const PayloadType = newWithHooks(
         newPayloadHookType,
@@ -160,21 +165,21 @@ const PostGraphileManyUpdatePlugin: T.Plugin = (
 
       // Setup and add GQL Input Types for "Unique Constraint" based updates
       // TODO: Look into adding updates via NodeId
-      uniqueConstraints.forEach(constraint => {
-        if (omit(constraint, 'update')) return;
+      uniqueConstraints.forEach((constraint) => {
+        if (omit(constraint, "update")) return;
 
         const keys = constraint.keyAttributes;
-        if (!keys.every(_ => _)) {
+        if (!keys.every((_) => _)) {
           throw new Error(
             `Consistency error: could not find an attribute in the constraint when building the many\
              update mutation for ${describePgEntity(table)}!`
           );
         }
-        if (keys.some(key => omit(key, 'read'))) return;
+        if (keys.some((key) => omit(key, "read"))) return;
 
-        const fieldName = `mn${inflection.upperCamelCase(
-          inflection.updateByKeys(keys, table, constraint)
-        )}`;
+        const fieldName = inflection.pluralize(
+          inflection.camelCase(inflection.updateByKeys(keys, table, constraint))
+        );
 
         const newInputHookType = GraphQLInputObjectType;
 
@@ -183,28 +188,26 @@ const PostGraphileManyUpdatePlugin: T.Plugin = (
         );
 
         const newInputHookSpec = {
-          name: `mn${inflection.upperCamelCase(
-            inflection.updateByKeysInputType(keys, table, constraint)
-          )}`,
+          name: `Update${inflection.pluralize(tableTypeName)}Input`,
           description: `All input for the update \`${fieldName}\` mutation.`,
           fields: Object.assign(
             {
               clientMutationId: {
-                type: GraphQLString
-              }
+                type: GraphQLString,
+              },
             },
             {
-              [`mn${inflection.upperCamelCase(patchName)}`]: {
+              [patchName]: {
                 description: `The one or many \`${tableTypeName}\` to be updated.`,
                 // TODO: Add an actual type that has the PKs required
                 // instead of using the tablePatch in another file,
                 // and hook onto the input types to do so.
                 //@ts-ignore
-                type: new GraphQLList(new GraphQLNonNull(tablePatch!))
-              }
+                type: new GraphQLList(new GraphQLNonNull(newPatchType!)),
+              },
             },
             {}
-          )
+          ),
         };
         const newInputHookScope = {
           __origin: `Adding table many update mutation input type for ${describePgEntity(
@@ -212,13 +215,13 @@ const PostGraphileManyUpdatePlugin: T.Plugin = (
           )},
                     You can rename the table's GraphQL type via a 'Smart Comment':\n\n
                     ${sqlCommentByAddingTags(table, {
-                      name: 'newNameHere'
+                      name: "newNameHere",
                     })}`,
           isPgUpdateInputType: true,
           isPgUpdateByKeysInputType: true,
           isMutationInput: true,
           pgInflection: table,
-          pgKeys: keys
+          pgKeys: keys,
         };
 
         const InputType = newWithHooks(
@@ -233,41 +236,42 @@ const PostGraphileManyUpdatePlugin: T.Plugin = (
           );
         }
         // Define the new mutation field
-        function newFieldWithHooks (): T.FieldWithHooksFunction {
+        function newFieldWithHooks(): T.FieldWithHooksFunction {
           return fieldWithHooks(
             fieldName,
-            context => {
+            (context) => {
               context.table = table;
               context.relevantAttributes = table.attributes.filter(
-                attr =>
-                  pgColumnFilter(attr, build, context) && !omit(attr, 'update')
+                (attr) =>
+                  pgColumnFilter(attr, build, context) && !omit(attr, "update")
               );
               return {
                 description: `Updates one or many \`${tableTypeName}\` using a unique key and a patch.`,
                 type: PayloadType,
                 args: {
                   input: {
-                    type: new GraphQLNonNull(InputType)
-                  }
+                    type: new GraphQLNonNull(InputType),
+                  },
                 },
-                resolve: resolver.bind(context)
+                resolve: resolver.bind(context),
               };
             },
             {
               pgFieldIntrospection: table,
               pgFieldConstraint: constraint,
               isPgNodeMutation: false,
-              isPgUpdateMutationField: true
+              isPgUpdateMutationField: true,
+              isMultipleMutation: true,
             }
           );
         }
 
-        async function resolver (_data, args, resolveContext, resolveInfo) {
+        async function resolver(_data, args, resolveContext, resolveInfo) {
           const { input } = args;
           const {
             table,
             getDataFromParsedResolveInfoFragment,
-            relevantAttributes
+            relevantAttributes,
           }: {
             table: T.PgClass;
             getDataFromParsedResolveInfoFragment: any;
@@ -289,11 +293,8 @@ const PostGraphileManyUpdatePlugin: T.Plugin = (
           const sqlColumnTypes: T.SQL[] = [];
           const allSQLColumns: T.SQL[] = [];
           const inputData: Object[] =
-            input[
-              `mn${inflection.upperCamelCase(
-                inflection.patchField(inflection.tableFieldName(table))
-              )}`
-            ];
+            input[inflection.patchField(inflection.tableFieldName(table))];
+
           if (!inputData || inputData.length === 0) return null;
           const sqlValues: T.SQL[][] = Array(inputData.length).fill([]);
 
@@ -308,16 +309,20 @@ const PostGraphileManyUpdatePlugin: T.Plugin = (
               const fieldName = inflection.column(attr);
               const dataValue = dataObj[fieldName];
 
-              const isConstraintAttr = keys.some(key => key.name === attr.name);
+              const isConstraintAttr = keys.some(
+                (key) => key.name === attr.name
+              );
 
               // Store all attributes on the first run.
               // Skip the primary keys, since we can't update those.
               if (i === 0 && !isConstraintAttr) {
                 sqlColumns.push(sql.raw(attr.name));
-                usedSQLColumns.push(sql.raw('use_' + attr.name));
+                usedSQLColumns.push(sql.raw("use_" + attr.name));
                 // Handle custom types
-                if (attr.type.namespaceName !== 'pg_catalog') {
-                  sqlColumnTypes.push(sql.raw(attr.class.namespaceName + '.' + attr.type.name));
+                if (attr.type.namespaceName !== "pg_catalog") {
+                  sqlColumnTypes.push(
+                    sql.raw(attr.class.namespaceName + "." + attr.type.name)
+                  );
                 } else {
                   sqlColumnTypes.push(sql.raw(attr.type.name));
                 }
@@ -331,17 +336,17 @@ const PostGraphileManyUpdatePlugin: T.Plugin = (
               if (fieldName in dataObj) {
                 sqlValues[i] = [
                   ...sqlValues[i],
-                  gql2pg(dataValue, attr.type, attr.typeModifier)
+                  gql2pg(dataValue, attr.type, attr.typeModifier),
                 ];
                 if (!isConstraintAttr) {
-                  usedColSQLVals[i] = [...usedColSQLVals[i], sql.raw('true')];
+                  usedColSQLVals[i] = [...usedColSQLVals[i], sql.raw("true")];
                 } else {
                   setOfRcvdDataHasPKValue = true;
                 }
               } else {
-                sqlValues[i] = [...sqlValues[i], sql.raw('NULL')];
+                sqlValues[i] = [...sqlValues[i], sql.raw("NULL")];
                 if (!isConstraintAttr) {
-                  usedColSQLVals[i] = [...usedColSQLVals[i], sql.raw('false')];
+                  usedColSQLVals[i] = [...usedColSQLVals[i], sql.raw("false")];
                 }
               }
             });
@@ -368,7 +373,7 @@ const PostGraphileManyUpdatePlugin: T.Plugin = (
                 (col, i) =>
                   sql.fragment`"${col}" = (CASE WHEN t2."use_${col}" THEN t2."${col}"::${sqlColumnTypes[i]} ELSE t1."${col}" END)`
               ),
-              ', '
+              ", "
             )}
           FROM (VALUES
                 (${sql.join(
@@ -376,33 +381,33 @@ const PostGraphileManyUpdatePlugin: T.Plugin = (
                     (dataGroup, i) =>
                       sql.fragment`${sql.join(
                         dataGroup.concat(usedColSQLVals[i]),
-                        ', '
+                        ", "
                       )}`
                   ),
-                  '),('
+                  "),("
                 )})
                ) t2(
                  ${sql.join(
                    allSQLColumns
-                     .map(col => sql.fragment`"${col}"`)
+                     .map((col) => sql.fragment`"${col}"`)
                      .concat(
-                       usedSQLColumns.map(useCol => sql.fragment`"${useCol}"`)
+                       usedSQLColumns.map((useCol) => sql.fragment`"${useCol}"`)
                      ),
-                   ', '
+                   ", "
                  )}
                )
           WHERE ${sql.fragment`(${sql.join(
             keys.map(
-              key =>
+              (key) =>
                 sql.fragment`t2.${sql.identifier(key.name)}::${sql.raw(
                   key.type.name
                 )} = t1.${sql.identifier(key.name)}`
             ),
-            ') and ('
+            ") and ("
           )})`}
           RETURNING ${sql.join(
-            allSQLColumns.map(col => sql.fragment`t1."${col}"`),
-            ', '
+            allSQLColumns.map((col) => sql.fragment`t1."${col}"`),
+            ", "
           )}
           `;
 
@@ -417,26 +422,23 @@ const PostGraphileManyUpdatePlugin: T.Plugin = (
             resolveInfo.rootValue
           );
 
-          let row;
+          let rows;
           try {
-            await pgClient.query('SAVEPOINT graphql_mutation');
-            const rows = await viaTemporaryTable(
+            await pgClient.query("SAVEPOINT graphql_mutation");
+            rows = await viaTemporaryTable(
               pgClient,
               sql.identifier(table.namespace.name, table.name),
               mutationQuery,
               modifiedRowAlias,
               query
             );
-
-            row = rows[0];
-
-            await pgClient.query('RELEASE SAVEPOINT graphql_mutation');
+            await pgClient.query("RELEASE SAVEPOINT graphql_mutation");
           } catch (e) {
-            await pgClient.query('ROLLBACK TO SAVEPOINT graphql_mutation');
+            await pgClient.query("ROLLBACK TO SAVEPOINT graphql_mutation");
             throw e;
           }
 
-          if (!row) {
+          if (!rows.length) {
             throw new Error(
               `No values were updated in collection '${inflection.pluralize(
                 inflection._singularizedTableName(table)
@@ -445,16 +447,16 @@ const PostGraphileManyUpdatePlugin: T.Plugin = (
           }
           return {
             clientMutationId: input.clientMutationId,
-            data: row
+            data: rows,
           };
         }
 
         newFields = extend(
           newFields,
           {
-            [fieldName]: newFieldWithHooks
+            [fieldName]: newFieldWithHooks,
           },
-          `Adding mn update mutation for ${describePgEntity(constraint)}`
+          `Adding update mutation for ${describePgEntity(constraint)}`
         );
       });
     }

@@ -23,13 +23,17 @@ View the [postgraphile docs](https://www.graphile.org/postgraphile/extending/#lo
 
 ## Plugin Options
 
-This plugin respects the default option to disable mutations all together via ```graphileBuildOptions```.
+By default mutations, provided by this plugin will be available for all the tables, but you can specify which tables to ignore in ignore option property which accepts an array of strings with the names of the tables to ignore.
+You can disable creating mutations provided by this plugin and set enabled options property to false. In this case ignore options property can be used to enable only the tables mentioned in the ignore option array
 
 ```js
 postgraphile(pgConfig, schema, {
-  graphileBuildOptions: {
-    pgDisableDefaultMutations: true
-  }
+    multipleMutationsPluginOptions: {
+      // enabled by default
+      enabled: true,
+      ignore: ["tableName1", "tableName2"],
+    },
+  },
 });
 ```
 
