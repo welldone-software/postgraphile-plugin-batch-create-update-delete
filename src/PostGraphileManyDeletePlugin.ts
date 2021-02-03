@@ -2,13 +2,9 @@ import * as T from "./pluginTypes";
 import debugFactory from "debug";
 import { GraphQLList } from "graphql";
 const debug = debugFactory("graphile-build-pg");
+import { createTypeWithoutNestedInputTypes } from "./utils";
 
-const PostGraphileManyDeletePlugin: T.Plugin = (
-  builder: T.SchemaBuilder,
-  options: any
-) => {
-  if (options.pgDisableDefaultMutations) return;
-
+const PostGraphileManyDeletePlugin: T.Plugin = (builder: T.SchemaBuilder) => {
   /**
    * Add a hook to create the new root level delete mutation
    */
@@ -215,6 +211,11 @@ const PostGraphileManyDeletePlugin: T.Plugin = (
           inflection.tableFieldName(table)
         );
 
+        const newPatchType = createTypeWithoutNestedInputTypes(
+          tablePatch,
+          `MultiDelete${tablePatch.name}`
+        );
+
         const newInputHookSpec = {
           name: `${inflection.upperCamelCase(fieldName)}Input`,
           description: `All input for the delete \`${fieldName}\` mutation.`,
@@ -231,7 +232,7 @@ const PostGraphileManyDeletePlugin: T.Plugin = (
                 // instead of using the tablePatch in another file,
                 // and hook onto the input types to do so.
                 //@ts-ignore
-                type: new GraphQLList(new GraphQLNonNull(tablePatch!)),
+                type: new GraphQLList(new GraphQLNonNull(newPatchType!)),
               },
             },
             {}

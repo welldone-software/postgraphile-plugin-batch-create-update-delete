@@ -1,13 +1,9 @@
 import * as T from "./pluginTypes";
 import debugFactory from "debug";
 const debug = debugFactory("graphile-build-pg");
+import { createTypeWithoutNestedInputTypes } from "./utils";
 
-const PostGraphileManyCreatePlugin: T.Plugin = (
-  builder: T.SchemaBuilder,
-  options: any
-) => {
-  if (options.pgDisableDefaultMutations) return;
-
+const PostGraphileManyCreatePlugin: T.Plugin = (builder: T.SchemaBuilder) => {
   /**
    * Add a hook to create the new root level create mutation
    */
@@ -102,6 +98,8 @@ const PostGraphileManyCreatePlugin: T.Plugin = (
       }
       const tableTypeName = inflection.tableType(table);
 
+      const newInputType = createTypeWithoutNestedInputTypes(TableInput);
+
       // Setup args for the input type
       const newInputHookType = GraphQLInputObjectType;
       const newInputHookSpec = {
@@ -115,7 +113,7 @@ const PostGraphileManyCreatePlugin: T.Plugin = (
           },
           [inflection.pluralize(inflection.camelCase(tableTypeName))]: {
             description: `The one or many \`${tableTypeName}\` to be created by this mutation.`,
-            type: new GraphQLList(new GraphQLNonNull(TableInput)),
+            type: new GraphQLList(new GraphQLNonNull(newInputType)),
           },
         }),
       };

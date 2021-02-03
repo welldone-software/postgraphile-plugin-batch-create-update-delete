@@ -2,13 +2,9 @@ import * as T from "./pluginTypes";
 import debugFactory from "debug";
 import { omitBy } from "lodash";
 const debug = debugFactory("graphile-build-pg");
+import { createTypeWithoutNestedInputTypes } from "./utils";
 
-const PostGraphileManyUpdatePlugin: T.Plugin = (
-  builder: T.SchemaBuilder,
-  options: any
-) => {
-  if (options.pgDisableDefaultMutations) return;
-
+const PostGraphileManyUpdatePlugin: T.Plugin = (builder: T.SchemaBuilder) => {
   /**
    * Add a hook to create the new root level create mutation
    */
@@ -109,18 +105,7 @@ const PostGraphileManyUpdatePlugin: T.Plugin = (
         It is still needed to disable definition of new resolver for mutations created by this plugin in nested mutations plugin
         using isMultipleMutation flag added for all mutations created by this plugin to context
       */
-      const fieldsWithoutNestedMutationsTypes = omitBy(
-        tablePatch.getFields(),
-        (field) => GraphQLInputObjectType.prototype.isPrototypeOf(field.type)
-      );
-
-      const newPatchType = new GraphQLInputObjectType({
-        name: `Multi${tablePatch.name}`,
-        description: tablePatch.description,
-        fields: {
-          ...fieldsWithoutNestedMutationsTypes,
-        },
-      });
+      const newPatchType = createTypeWithoutNestedInputTypes(tablePatch);
 
       const tableTypeName = namedType.name;
       const uniqueConstraints = table.constraints.filter(
