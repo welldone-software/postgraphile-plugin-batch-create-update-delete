@@ -105,7 +105,7 @@ const PostGraphileManyCreatePlugin: T.Plugin = (
       // Setup args for the input type
       const newInputHookType = GraphQLInputObjectType;
       const newInputHookSpec = {
-        name: `mn${inflection.createInputType(table)}`,
+        name: inflection.camelCase(inflection.createInputType(table)),
         description: `All input for the create mn\`${tableTypeName}\` mutation.`,
         fields: () => ({
           clientMutationId: {
@@ -113,7 +113,7 @@ const PostGraphileManyCreatePlugin: T.Plugin = (
               "An arbitrary string value with no semantic meaning. Will be included in the payload verbatim. May be used to track mutations by the client.",
             type: GraphQLString,
           },
-          [`mn${tableTypeName}`]: {
+          [inflection.pluralize(inflection.camelCase(tableTypeName))]: {
             description: `The one or many \`${tableTypeName}\` to be created by this mutation.`,
             type: new GraphQLList(new GraphQLNonNull(TableInput)),
           },
@@ -140,7 +140,7 @@ const PostGraphileManyCreatePlugin: T.Plugin = (
       // Setup args for payload type
       const newPayloadHookType = GraphQLObjectType;
       const newPayloadHookSpec = {
-        name: `mn${inflection.createPayloadType(table)}`,
+        name: inflection.pluralize(inflection.createPayloadType(table)),
         description: `The output of our many create \`${tableTypeName}\` mutation.`,
         fields: ({ fieldWithHooks }) => {
           const tableName = inflection.tableFieldName(table);
@@ -156,7 +156,7 @@ const PostGraphileManyCreatePlugin: T.Plugin = (
               tableName,
               {
                 description: `The \`${tableTypeName}\` that was created by this mutation.`,
-                type: tableType,
+                type: new GraphQLList(new GraphQLNonNull(tableType)),
               },
               {
                 isPgCreatePayloadResultField: true,
@@ -185,9 +185,9 @@ const PostGraphileManyCreatePlugin: T.Plugin = (
         newPayloadHookScope
       );
 
-      const fieldName = `mn${inflection.upperCamelCase(
-        inflection.createField(table)
-      )}`;
+      const fieldName = inflection.pluralize(
+        inflection.camelCase(inflection.createField(table))
+      );
 
       function newFieldWithHooks(): T.FieldWithHooksFunction {
         return fieldWithHooks(
@@ -212,6 +212,7 @@ const PostGraphileManyCreatePlugin: T.Plugin = (
           {
             pgFieldIntrospection: table,
             isPgCreateMutationField: true,
+            isMultipleMutation: true,
           }
         );
       }
@@ -252,7 +253,9 @@ const PostGraphileManyCreatePlugin: T.Plugin = (
         const sqlColumns: T.SQL[] = [];
         const inputData: Object[] =
           input[
-            `mn${inflection.upperCamelCase(inflection.tableFieldName(table))}`
+            inflection.pluralize(
+              inflection.camelCase(inflection.tableFieldName(table))
+            )
           ];
         if (!inputData || inputData.length === 0) return null;
         const sqlValues: T.SQL[][] = Array(inputData.length).fill([]);
@@ -290,18 +293,16 @@ const PostGraphileManyCreatePlugin: T.Plugin = (
             )})`
               : sql.fragment`default values`
           } returning *`;
-        let row;
+        let rows;
         try {
           await pgClient.query("SAVEPOINT graphql_mutation");
-          const rows = await viaTemporaryTable(
+          rows = await viaTemporaryTable(
             pgClient,
             sql.identifier(table.namespace.name, table.name),
             mutationQuery,
             insertedRowAlias,
             query
           );
-
-          row = rows[0];
           await pgClient.query("RELEASE SAVEPOINT graphql_mutation");
         } catch (e) {
           await pgClient.query("ROLLBACK TO SAVEPOINT graphql_mutation");
@@ -310,7 +311,7 @@ const PostGraphileManyCreatePlugin: T.Plugin = (
 
         return {
           clientMutationId: input.clientMutationId,
-          data: row,
+          data: rows,
         };
       }
 

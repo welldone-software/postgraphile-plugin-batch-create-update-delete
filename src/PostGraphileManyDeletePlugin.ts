@@ -1,7 +1,7 @@
-import * as T from './pluginTypes';
-import debugFactory from 'debug';
-import { GraphQLList } from 'graphql';
-const debug = debugFactory('graphile-build-pg');
+import * as T from "./pluginTypes";
+import debugFactory from "debug";
+import { GraphQLList } from "graphql";
+const debug = debugFactory("graphile-build-pg");
 
 const PostGraphileManyDeletePlugin: T.Plugin = (
   builder: T.SchemaBuilder,
@@ -14,17 +14,17 @@ const PostGraphileManyDeletePlugin: T.Plugin = (
    */
   builder.hook(
     // @ts-ignore
-    'GraphQLObjectType:fields',
+    "GraphQLObjectType:fields",
     GQLObjectFieldsHookHandlerFcn,
-    ['PgMutationManyDelete'], // hook provides
+    ["PgMutationManyDelete"], // hook provides
     [], // hook before
-    ['PgMutationUpdateDelete'] // hook after
+    ["PgMutationUpdateDelete"] // hook after
   );
 
   /**
    * Handles adding the new "many delete" root level fields
    */
-  function GQLObjectFieldsHookHandlerFcn (
+  function GQLObjectFieldsHookHandlerFcn(
     fields: any,
     build: T.Build,
     context: T.Context
@@ -49,7 +49,7 @@ const PostGraphileManyDeletePlugin: T.Plugin = (
         GraphQLString,
         GraphQLObjectType,
         GraphQLID,
-        getNamedType
+        getNamedType,
       },
       pgColumnFilter,
       inflection,
@@ -58,11 +58,11 @@ const PostGraphileManyDeletePlugin: T.Plugin = (
       pgViaTemporaryTable: viaTemporaryTable,
       describePgEntity,
       sqlCommentByAddingTags,
-      pgField
+      pgField,
     } = build;
     const {
       scope: { isRootMutation },
-      fieldWithHooks
+      fieldWithHooks,
     } = context;
 
     if (!isRootMutation || !pgColumnFilter) return fields;
@@ -74,11 +74,11 @@ const PostGraphileManyDeletePlugin: T.Plugin = (
       handleAdditionsFromTableInfo(pgIntrospectionResultsByKind.class[i]);
     }
 
-    function handleAdditionsFromTableInfo (table: T.PgClass) {
+    function handleAdditionsFromTableInfo(table: T.PgClass) {
       if (
         !table.namespace ||
         !table.isDeletable ||
-        omit(table, 'delete') ||
+        omit(table, "delete") ||
         !table.tags.mncud
       )
         return;
@@ -104,14 +104,14 @@ const PostGraphileManyDeletePlugin: T.Plugin = (
 
       const tableTypeName = namedType.name;
       const uniqueConstraints = table.constraints.filter(
-        con => con.type === 'p'
+        (con) => con.type === "p"
       );
 
       // Setup and add the GraphQL Payload Type
       const newPayloadHookType = GraphQLObjectType;
       const newPayloadHookSpec = {
-        name: `mn${inflection.deletePayloadType(table)}`,
-        description: `The output of our delete mn \`${tableTypeName}\` mutation.`,
+        name: inflection.pluralize(inflection.deletePayloadType(table)),
+        description: `The output of our delete \`${tableTypeName}\` mutation.`,
         fields: ({ fieldWithHooks }) => {
           const tableName = inflection.tableFieldName(table);
           const deletedNodeIdFieldName = inflection.deletedNodeId(table);
@@ -120,8 +120,8 @@ const PostGraphileManyDeletePlugin: T.Plugin = (
             {
               clientMutationId: {
                 description:
-                  'The exact same `clientMutationId` that was provided in the mutation input, unchanged and unused. May be used by a client to track mutations.',
-                type: GraphQLString
+                  "The exact same `clientMutationId` that was provided in the mutation input, unchanged and unused. May be used by a client to track mutations.",
+                type: GraphQLString,
               },
 
               [tableName]: pgField(
@@ -130,11 +130,11 @@ const PostGraphileManyDeletePlugin: T.Plugin = (
                 tableName,
                 {
                   description: `The \`${tableTypeName}\` that was deleted by this mutation.`,
-                  type: tableType
+                  type: new GraphQLList(new GraphQLNonNull(tableType)),
                 },
                 {},
                 false
-              )
+              ),
             },
             {
               [deletedNodeIdFieldName]: fieldWithHooks(
@@ -147,11 +147,11 @@ const PostGraphileManyDeletePlugin: T.Plugin = (
                     fieldDataGeneratorsByTableType &&
                     fieldDataGeneratorsByTableType[nodeIdFieldName];
                   if (gens) {
-                    gens.forEach(gen => addDataGenerator(gen));
+                    gens.forEach((gen) => addDataGenerator(gen));
                   }
                   return {
                     type: GraphQLID,
-                    resolve (data) {
+                    resolve(data) {
                       return (
                         data.data.__identifiers &&
                         getNodeIdForTypeAndIdentifiers(
@@ -159,27 +159,27 @@ const PostGraphileManyDeletePlugin: T.Plugin = (
                           ...data.data.__identifiers
                         )
                       );
-                    }
+                    },
                   };
                 },
                 {
-                  isPgMutationPayloadDeletedNodeIdField: true
+                  isPgMutationPayloadDeletedNodeIdField: true,
                 }
-              )
+              ),
             }
           );
-        }
+        },
       };
       const newPayloadHookScope = {
-        __origin: `Adding table mn delete mutation payload type for ${describePgEntity(
+        __origin: `Adding table delete mutation payload type for ${describePgEntity(
           table
         )}. You can rename the table's GraphQL type via a 'Smart Comment':\n\n  
           ${sqlCommentByAddingTags(table, {
-            name: 'newNameHere'
+            name: "newNameHere",
           })}`,
         isMutationPayload: true,
         isPgDeletePayloadType: true,
-        pgIntrospection: table
+        pgIntrospection: table,
       };
       const PayloadType = newWithHooks(
         newPayloadHookType,
@@ -193,21 +193,21 @@ const PostGraphileManyDeletePlugin: T.Plugin = (
       }
       // Setup and add GQL Input Types for "Unique Constraint" based updates
       // TODO: Add NodeId code updates
-      uniqueConstraints.forEach(constraint => {
-        if (omit(constraint, 'delete')) return;
+      uniqueConstraints.forEach((constraint) => {
+        if (omit(constraint, "delete")) return;
         const keys = constraint.keyAttributes;
 
-        if (!keys.every(_ => _)) {
+        if (!keys.every((_) => _)) {
           throw new Error(
             `Consistency error: could not find an attribute in the constraint when building the many\
              delete mutation for ${describePgEntity(table)}!`
           );
         }
-        if (keys.some(key => omit(key, 'read'))) return;
+        if (keys.some((key) => omit(key, "read"))) return;
 
-        const fieldName = `mn${inflection.upperCamelCase(
-          inflection.deleteByKeys(keys, table, constraint)
-        )}`;
+        const fieldName = inflection.pluralize(
+          inflection.camelCase(inflection.deleteByKeys(keys, table, constraint))
+        );
 
         const newInputHookType = GraphQLInputObjectType;
 
@@ -216,28 +216,26 @@ const PostGraphileManyDeletePlugin: T.Plugin = (
         );
 
         const newInputHookSpec = {
-          name: `mn${inflection.upperCamelCase(
-            inflection.deleteByKeysInputType(keys, table, constraint)
-          )}`,
+          name: `${inflection.upperCamelCase(fieldName)}Input`,
           description: `All input for the delete \`${fieldName}\` mutation.`,
           fields: Object.assign(
             {
               clientMutationId: {
-                type: GraphQLString
-              }
+                type: GraphQLString,
+              },
             },
             {
-              [`mn${inflection.upperCamelCase(patchName)}`]: {
+              [patchName]: {
                 description: `The one or many \`${tableTypeName}\` to be deleted. You must provide the PK values!`,
                 // TODO: Add an actual type that has the PKs required
                 // instead of using the tablePatch in another file,
                 // and hook onto the input types to do so.
                 //@ts-ignore
-                type: new GraphQLList(new GraphQLNonNull(tablePatch!))
-              }
+                type: new GraphQLList(new GraphQLNonNull(tablePatch!)),
+              },
             },
             {}
-          )
+          ),
         };
 
         const newInputHookScope = {
@@ -246,13 +244,13 @@ const PostGraphileManyDeletePlugin: T.Plugin = (
           )},
                     You can rename the table's GraphQL type via a 'Smart Comment':\n\n
                     ${sqlCommentByAddingTags(table, {
-                      name: 'newNameHere'
+                      name: "newNameHere",
                     })}`,
           isPgDeleteInputType: true,
           isPgDeleteByKeysInputType: true,
           isMutationInput: true,
           pgInflection: table,
-          pgKeys: keys
+          pgKeys: keys,
         };
 
         const InputType = newWithHooks(
@@ -268,41 +266,42 @@ const PostGraphileManyDeletePlugin: T.Plugin = (
         }
 
         // Define the new mutation field
-        function newFieldWithHooks (): T.FieldWithHooksFunction {
+        function newFieldWithHooks(): T.FieldWithHooksFunction {
           return fieldWithHooks(
             fieldName,
-            context => {
+            (context) => {
               context.table = table;
               context.relevantAttributes = table.attributes.filter(
-                attr =>
-                  pgColumnFilter(attr, build, context) && !omit(attr, 'delete')
+                (attr) =>
+                  pgColumnFilter(attr, build, context) && !omit(attr, "delete")
               );
               return {
                 description: `Deletes one or many \`${tableTypeName}\` a unique key via a patch.`,
                 type: PayloadType,
                 args: {
                   input: {
-                    type: new GraphQLNonNull(InputType)
-                  }
+                    type: new GraphQLNonNull(InputType),
+                  },
                 },
-                resolve: resolver.bind(context)
+                resolve: resolver.bind(context),
               };
             },
             {
               pgFieldIntrospection: table,
               pgFieldConstraint: constraint,
               isPgNodeMutation: false,
-              isPgDeleteMutationField: true
+              isPgDeleteMutationField: true,
+              isMultipleMutation: true,
             }
           );
         }
 
-        async function resolver (_data, args, resolveContext, resolveInfo) {
+        async function resolver(_data, args, resolveContext, resolveInfo) {
           const { input } = args;
           const {
             table,
             getDataFromParsedResolveInfoFragment,
-            relevantAttributes
+            relevantAttributes,
           }: {
             table: T.PgClass;
             getDataFromParsedResolveInfoFragment: any;
@@ -322,23 +321,21 @@ const PostGraphileManyDeletePlugin: T.Plugin = (
 
           const sqlColumns: T.SQL[] = [];
           const inputData: Object[] =
-            input[
-              `mn${inflection.upperCamelCase(
-                inflection.patchField(inflection.tableFieldName(table))
-              )}`
-            ];
+            input[inflection.patchField(inflection.tableFieldName(table))];
           if (!inputData || inputData.length === 0) return null;
           const sqlValues: T.SQL[][] = Array(inputData.length).fill([]);
           let hasConstraintValue = true;
 
           inputData.forEach((dataObj, i) => {
             let setOfRcvdDataHasPKValue = false;
-            
+
             relevantAttributes.forEach((attr: T.PgAttribute) => {
               const fieldName = inflection.column(attr);
               const dataValue = dataObj[fieldName];
 
-              const isConstraintAttr = keys.some(key => key.name === attr.name);
+              const isConstraintAttr = keys.some(
+                (key) => key.name === attr.name
+              );
               // Ensure that the field values are PKs since that's
               // all we care about for deletions.
               if (!isConstraintAttr) return;
@@ -349,7 +346,7 @@ const PostGraphileManyDeletePlugin: T.Plugin = (
               if (fieldName in dataObj) {
                 sqlValues[i] = [
                   ...sqlValues[i],
-                  gql2pg(dataValue, attr.type, attr.typeModifier)
+                  gql2pg(dataValue, attr.type, attr.typeModifier),
                 ];
                 if (isConstraintAttr) {
                   setOfRcvdDataHasPKValue = true;
@@ -381,10 +378,10 @@ const PostGraphileManyDeletePlugin: T.Plugin = (
                       dataGroup.map(
                         (val, j) => sql.fragment`"${sqlColumns[j]}" = ${val}`
                       ),
-                      ') and ('
+                      ") and ("
                     )})`
                 ),
-                ') or ('
+                ") or ("
               )})
             RETURNING *
           `;
@@ -400,25 +397,23 @@ const PostGraphileManyDeletePlugin: T.Plugin = (
             resolveInfo.rootValue
           );
 
-          let row;
+          let rows;
           try {
-            await pgClient.query('SAVEPOINT graphql_mutation');
-            const rows = await viaTemporaryTable(
+            await pgClient.query("SAVEPOINT graphql_mutation");
+            rows = await viaTemporaryTable(
               pgClient,
               sql.identifier(table.namespace.name, table.name),
               mutationQuery,
               modifiedRowAlias,
               query
             );
-
-            row = rows[0];
-            await pgClient.query('RELEASE SAVEPOINT graphql_mutation');
+            await pgClient.query("RELEASE SAVEPOINT graphql_mutation");
           } catch (e) {
-            await pgClient.query('ROLLBACK TO SAVEPOINT graphql_mutation');
+            await pgClient.query("ROLLBACK TO SAVEPOINT graphql_mutation");
             throw e;
           }
 
-          if (!row) {
+          if (!rows.length) {
             throw new Error(
               `No values were deleted in collection '${inflection.pluralize(
                 inflection._singularizedTableName(table)
@@ -427,14 +422,14 @@ const PostGraphileManyDeletePlugin: T.Plugin = (
           }
           return {
             clientMutationId: input.clientMutationId,
-            data: row
+            data: rows,
           };
         }
 
         newFields = extend(
           newFields,
           {
-            [fieldName]: newFieldWithHooks
+            [fieldName]: newFieldWithHooks,
           },
           `Adding mn delete mutation for ${describePgEntity(constraint)}`
         );
