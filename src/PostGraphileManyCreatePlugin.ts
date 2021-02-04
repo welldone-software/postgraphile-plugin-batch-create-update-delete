@@ -1,29 +1,28 @@
-import * as T from './pluginTypes';
-import debugFactory from 'debug';
-const debug = debugFactory('graphile-build-pg');
+import * as T from "./pluginTypes";
+import debugFactory from "debug";
+const debug = debugFactory("graphile-build-pg");
+import { createTypeWithoutNestedInputTypes } from "./utils";
 
 const PostGraphileManyCreatePlugin: T.Plugin = (
-  builder: T.SchemaBuilder,
-  options: any
+  builder,
+  options: T.PgOptions
 ) => {
-  if (options.pgDisableDefaultMutations) return;
-
   /**
    * Add a hook to create the new root level create mutation
    */
   builder.hook(
     // @ts-ignore
-    'GraphQLObjectType:fields',
+    "GraphQLObjectType:fields",
     GQLObjectFieldsHookHandlerFcn,
-    ['PgMutationManyCreate'], // Hook provides
+    ["PgMutationManyCreate"], // Hook provides
     [], // Hook before
-    ['PgMutationCreate'] // Hook after
+    ["PgMutationCreate"] // Hook after
   );
 
   /**
    * Handles adding the new "many create" root level fields
    */
-  function GQLObjectFieldsHookHandlerFcn (
+  function GQLObjectFieldsHookHandlerFcn(
     fields: any,
     build: T.Build,
     context: T.Context
@@ -42,7 +41,7 @@ const PostGraphileManyCreatePlugin: T.Plugin = (
         GraphQLInputObjectType,
         GraphQLNonNull,
         GraphQLString,
-        GraphQLList
+        GraphQLList,
       },
       pgColumnFilter,
       inflection,
@@ -51,12 +50,12 @@ const PostGraphileManyCreatePlugin: T.Plugin = (
       pgViaTemporaryTable: viaTemporaryTable,
       describePgEntity,
       sqlCommentByAddingTags,
-      pgField
+      pgField,
     } = build;
 
     const {
       scope: { isRootMutation },
-      fieldWithHooks
+      fieldWithHooks,
     } = context;
 
     if (!isRootMutation) return fields;
@@ -68,12 +67,12 @@ const PostGraphileManyCreatePlugin: T.Plugin = (
       handleAdditionsFromTableInfo(pgIntrospectionResultsByKind.class[i]);
     }
 
-    function handleAdditionsFromTableInfo (table: T.PgClass) {
+    function handleAdditionsFromTableInfo(table: T.PgClass) {
       if (
         !table.namespace ||
         !table.isSelectable ||
         !table.isInsertable ||
-        omit(table, 'create') ||
+        omit(table, "create") ||
         !table.tags.mncud
       )
         return;
@@ -98,25 +97,40 @@ const PostGraphileManyCreatePlugin: T.Plugin = (
         debug(
           `There was no input type for table '${table.namespace.name}.${table.name}', so we're going to omit it from the create mutation.`
         );
+        return;
       }
       const tableTypeName = inflection.tableType(table);
+      const pluralTableTypeName = inflection.pluralize(tableTypeName);
+
+      const prefix = options.multipleMutationsPluginOptions?.prefix;
+      const isPrefixProvided = !!prefix;
+
+      const baseNewInputTypeName = `Multi${pluralTableTypeName}Input`;
+      const newInputType = createTypeWithoutNestedInputTypes({
+        inputType: TableInput,
+        name: isPrefixProvided
+          ? `${prefix}${baseNewInputTypeName}`
+          : baseNewInputTypeName,
+      });
+
+      const baseInputName = `Create${pluralTableTypeName}Input`;
 
       // Setup args for the input type
       const newInputHookType = GraphQLInputObjectType;
       const newInputHookSpec = {
-        name: `mn${inflection.createInputType(table)}`,
-        description: `All input for the create mn\`${tableTypeName}\` mutation.`,
+        name: isPrefixProvided ? `${prefix}${baseInputName}` : baseInputName,
+        description: `All input for the create \`${pluralTableTypeName}\` mutation.`,
         fields: () => ({
           clientMutationId: {
             description:
-              'An arbitrary string value with no semantic meaning. Will be included in the payload verbatim. May be used to track mutations by the client.',
-            type: GraphQLString
+              "An arbitrary string value with no semantic meaning. Will be included in the payload verbatim. May be used to track mutations by the client.",
+            type: GraphQLString,
           },
-          [`mn${tableTypeName}`]: {
+          [inflection.camelCase(pluralTableTypeName)]: {
             description: `The one or many \`${tableTypeName}\` to be created by this mutation.`,
-            type: new GraphQLList(new GraphQLNonNull(TableInput))
-          }
-        })
+            type: new GraphQLList(new GraphQLNonNull(newInputType)),
+          },
+        }),
       };
       const newInputHookScope = {
         __origin: `Adding many table create input type for ${describePgEntity(
@@ -124,11 +138,11 @@ const PostGraphileManyCreatePlugin: T.Plugin = (
         )}.
                    You can rename the table's GraphQL type via a 'Smart Comment':
                    \n\n  ${sqlCommentByAddingTags(table, {
-                     name: 'newNameHere'
+                     name: "newNameHere",
                    })}`,
         isPgCreateInputType: true,
         pgInflection: table,
-        pgIntrospection: table
+        pgIntrospection: table,
       };
       const InputType = newWithHooks(
         newInputHookType,
@@ -138,32 +152,36 @@ const PostGraphileManyCreatePlugin: T.Plugin = (
 
       // Setup args for payload type
       const newPayloadHookType = GraphQLObjectType;
+      const basePayloadName = `Create${pluralTableTypeName}Payload`;
+
       const newPayloadHookSpec = {
-        name: `mn${inflection.createPayloadType(table)}`,
-        description: `The output of our many create \`${tableTypeName}\` mutation.`,
+        name: isPrefixProvided
+          ? `${prefix}${basePayloadName}`
+          : basePayloadName,
+        description: `The output of our many create \`${pluralTableTypeName}\` mutation.`,
         fields: ({ fieldWithHooks }) => {
           const tableName = inflection.tableFieldName(table);
           return {
             clientMutationId: {
               description:
-                'The exact same `clientMutationId` that was provided in the mutation input, unchanged and unused. May be used by a client to track mutations.',
-              type: GraphQLString
+                "The exact same `clientMutationId` that was provided in the mutation input, unchanged and unused. May be used by a client to track mutations.",
+              type: GraphQLString,
             },
             [tableName]: pgField(
               build,
               fieldWithHooks,
               tableName,
               {
-                description: `The \`${tableTypeName}\` that was created by this mutation.`,
-                type: tableType
+                description: `The \`${pluralTableTypeName}\` that was created by this mutation.`,
+                type: new GraphQLList(new GraphQLNonNull(tableType)),
               },
               {
                 isPgCreatePayloadResultField: true,
-                pgFieldIntrospection: table
+                pgFieldIntrospection: table,
               }
-            )
+            ),
           };
-        }
+        },
       };
       const newPayloadHookScope = {
         __origin: `Adding many table many create payload type for ${describePgEntity(
@@ -171,12 +189,12 @@ const PostGraphileManyCreatePlugin: T.Plugin = (
         )}.
                    You can rename the table's GraphQL type via a 'Smart Comment':
                    \n\n  ${sqlCommentByAddingTags(table, {
-                     name: 'newNameHere'
+                     name: "newNameHere",
                    })}\n\nor disable the built-in create mutation via:\n\n  
-                    ${sqlCommentByAddingTags(table, { omit: 'create' })}`,
+                    ${sqlCommentByAddingTags(table, { omit: "create" })}`,
         isMutationPayload: true,
         isPgCreatePayloadType: true,
-        pgIntrospection: table
+        pgIntrospection: table,
       };
       const PayloadType = newWithHooks(
         newPayloadHookType,
@@ -184,43 +202,48 @@ const PostGraphileManyCreatePlugin: T.Plugin = (
         newPayloadHookScope
       );
 
-      const fieldName = `mn${inflection.upperCamelCase(
-        inflection.createField(table)
-      )}`;
+      const baseFieldName = inflection.createField(table);
 
-      function newFieldWithHooks (): T.FieldWithHooksFunction {
+      const fieldName = isPrefixProvided
+        ? `${prefix}${inflection.pluralize(
+            inflection.upperCamelCase(baseFieldName)
+          )}`
+        : inflection.pluralize(inflection.camelCase(baseFieldName));
+
+      function newFieldWithHooks(): T.FieldWithHooksFunction {
         return fieldWithHooks(
           fieldName,
-          context => {
+          (context) => {
             context.table = table;
             context.relevantAttributes = table.attributes.filter(
-              attr =>
-                pgColumnFilter(attr, build, context) && !omit(attr, 'create')
+              (attr) =>
+                pgColumnFilter(attr, build, context) && !omit(attr, "create")
             );
             return {
               description: `Creates one or many \`${tableTypeName}\`.`,
               type: PayloadType,
               args: {
                 input: {
-                  type: new GraphQLNonNull(InputType)
-                }
+                  type: new GraphQLNonNull(InputType),
+                },
               },
-              resolve: resolver.bind(context)
+              resolve: resolver.bind(context),
             };
           },
           {
             pgFieldIntrospection: table,
-            isPgCreateMutationField: true
+            isPgCreateMutationField: true,
+            isMultipleMutation: true,
           }
         );
       }
 
-      async function resolver (_data, args, resolveContext, resolveInfo) {
+      async function resolver(_data, args, resolveContext, resolveInfo) {
         const { input } = args;
         const {
           table,
           getDataFromParsedResolveInfoFragment,
-          relevantAttributes
+          relevantAttributes,
         }: {
           table: T.PgClass;
           getDataFromParsedResolveInfoFragment: any;
@@ -248,11 +271,11 @@ const PostGraphileManyCreatePlugin: T.Plugin = (
           resolveInfo.rootValue
         );
 
+        const baseInputPropName = inflection.tableFieldName(table);
+
         const sqlColumns: T.SQL[] = [];
         const inputData: Object[] =
-          input[
-            `mn${inflection.upperCamelCase(inflection.tableFieldName(table))}`
-          ];
+          input[inflection.pluralize(inflection.camelCase(baseInputPropName))];
         if (!inputData || inputData.length === 0) return null;
         const sqlValues: T.SQL[][] = Array(inputData.length).fill([]);
 
@@ -268,10 +291,10 @@ const PostGraphileManyCreatePlugin: T.Plugin = (
             if (Object.prototype.hasOwnProperty.call(dataObj, fieldName)) {
               sqlValues[i] = [
                 ...sqlValues[i],
-                gql2pg(dataValue, attr.type, attr.typeModifier)
+                gql2pg(dataValue, attr.type, attr.typeModifier),
               ];
             } else {
-              sqlValues[i] = [...sqlValues[i], sql.raw('default')];
+              sqlValues[i] = [...sqlValues[i], sql.raw("default")];
             }
           });
         });
@@ -280,48 +303,46 @@ const PostGraphileManyCreatePlugin: T.Plugin = (
           INSERT INTO ${sql.identifier(table.namespace.name, table.name)} 
           ${
             sqlColumns.length
-              ? sql.fragment`(${sql.join(sqlColumns, ', ')})
+              ? sql.fragment`(${sql.join(sqlColumns, ", ")})
             VALUES (${sql.join(
               sqlValues.map(
-                dataGroup => sql.fragment`${sql.join(dataGroup, ', ')}`
+                (dataGroup) => sql.fragment`${sql.join(dataGroup, ", ")}`
               ),
-              '),('
+              "),("
             )})`
               : sql.fragment`default values`
           } returning *`;
-        let row;
+        let rows;
         try {
-          await pgClient.query('SAVEPOINT graphql_mutation');
-          const rows = await viaTemporaryTable(
+          await pgClient.query("SAVEPOINT graphql_mutation");
+          rows = await viaTemporaryTable(
             pgClient,
             sql.identifier(table.namespace.name, table.name),
             mutationQuery,
             insertedRowAlias,
             query
           );
-
-          row = rows[0];
-          await pgClient.query('RELEASE SAVEPOINT graphql_mutation');
+          await pgClient.query("RELEASE SAVEPOINT graphql_mutation");
         } catch (e) {
-          await pgClient.query('ROLLBACK TO SAVEPOINT graphql_mutation');
+          await pgClient.query("ROLLBACK TO SAVEPOINT graphql_mutation");
           throw e;
         }
 
         return {
           clientMutationId: input.clientMutationId,
-          data: row
+          data: rows,
         };
       }
 
       newFields = extend(
         newFields,
         {
-          [fieldName]: newFieldWithHooks
+          [fieldName]: newFieldWithHooks,
         },
         `Adding create mutation for ${describePgEntity(table)}. You can omit
          this default mutation with a 'Smart Comment':\n\n  
          ${sqlCommentByAddingTags(table, {
-           omit: 'create'
+           omit: "create",
          })}`
       );
     }
