@@ -1,10 +1,12 @@
 import * as T from "./pluginTypes";
 import debugFactory from "debug";
-import { omitBy } from "lodash";
 const debug = debugFactory("graphile-build-pg");
 import { createTypeWithoutNestedInputTypes } from "./utils";
 
-const PostGraphileManyUpdatePlugin: T.Plugin = (builder: T.SchemaBuilder) => {
+const PostGraphileManyUpdatePlugin: T.Plugin = (
+  builder,
+  options: T.PgOptions
+) => {
   /**
    * Add a hook to create the new root level create mutation
    */
@@ -99,24 +101,40 @@ const PostGraphileManyUpdatePlugin: T.Plugin = (builder: T.SchemaBuilder) => {
         );
       }
 
+      const prefix = options.multipleMutationsPluginOptions?.prefix;
+      const isPrefixProvided = !!prefix;
+
+      const tableTypeName = namedType.name;
+      const pluralTableTypeName = inflection.pluralize(tableTypeName);
+
+      const baseNewPatchTypeName = `UpdateMulti${pluralTableTypeName}Input`;
+
       /*
         We need to remove nested mutations plugin types, because nested mutations are not supported in this plugin.
         But this workaround only will not allow to make both this plugin and nested mutations plugin work together.
         It is still needed to disable definition of new resolver for mutations created by this plugin in nested mutations plugin
         using isMultipleMutation flag added for all mutations created by this plugin to context
       */
-      const newPatchType = createTypeWithoutNestedInputTypes(tablePatch);
+      const newPatchType = createTypeWithoutNestedInputTypes({
+        inputType: tablePatch,
+        name: isPrefixProvided
+          ? `${prefix}${baseNewPatchTypeName}`
+          : baseNewPatchTypeName,
+      });
 
-      const tableTypeName = namedType.name;
       const uniqueConstraints = table.constraints.filter(
         (con) => con.type === "p"
       );
 
+      const basePayloadName = `Update${pluralTableTypeName}Payload`;
+
       // Setup and add the GraphQL Payload type
       const newPayloadHookType = GraphQLObjectType;
       const newPayloadHookSpec = {
-        name: `Update${inflection.pluralize(tableTypeName)}Payload`,
-        description: `The output of our update mn \`${tableTypeName}\` mutation.`,
+        name: isPrefixProvided
+          ? `${prefix}${basePayloadName}`
+          : basePayloadName,
+        description: `The output of our update \`${pluralTableTypeName}\` mutation.`,
         fields: ({ fieldWithHooks }) => {
           const tableName = inflection.tableFieldName(table);
           return {
@@ -131,7 +149,7 @@ const PostGraphileManyUpdatePlugin: T.Plugin = (builder: T.SchemaBuilder) => {
               fieldWithHooks,
               tableName,
               {
-                description: `The \`${tableTypeName}\` that was updated by this mutation.`,
+                description: `The \`${pluralTableTypeName}\` that was updated by this mutation.`,
                 type: new GraphQLList(new GraphQLNonNull(tableType)),
               },
               {},
@@ -159,7 +177,7 @@ const PostGraphileManyUpdatePlugin: T.Plugin = (builder: T.SchemaBuilder) => {
       );
       if (!PayloadType) {
         throw new Error(
-          `Failed to determine payload type on the mn\`${tableTypeName}\` mutation`
+          `Failed to determine payload type on the \`${pluralTableTypeName}\` mutation`
         );
       }
 
@@ -177,19 +195,28 @@ const PostGraphileManyUpdatePlugin: T.Plugin = (builder: T.SchemaBuilder) => {
         }
         if (keys.some((key) => omit(key, "read"))) return;
 
-        const fieldName = inflection.pluralize(
-          inflection.camelCase(inflection.updateByKeys(keys, table, constraint))
+        const baseFieldName = inflection.updateManyByKeys(
+          keys,
+          table,
+          constraint
         );
+        const fieldName = isPrefixProvided
+          ? `${prefix}${inflection.upperCamelCase(baseFieldName)}`
+          : inflection.camelCase(baseFieldName);
 
         const newInputHookType = GraphQLInputObjectType;
+
+        const baseInputTypeName = `Update${pluralTableTypeName}Input`;
 
         const patchName = inflection.patchField(
           inflection.tableFieldName(table)
         );
 
         const newInputHookSpec = {
-          name: `Update${inflection.pluralize(tableTypeName)}Input`,
-          description: `All input for the update \`${fieldName}\` mutation.`,
+          name: isPrefixProvided
+            ? `${prefix}${baseInputTypeName}`
+            : baseInputTypeName,
+          description: `All input for the update \`${pluralTableTypeName}\` mutation.`,
           fields: Object.assign(
             {
               clientMutationId: {
@@ -292,6 +319,7 @@ const PostGraphileManyUpdatePlugin: T.Plugin = (builder: T.SchemaBuilder) => {
           const sqlColumns: T.SQL[] = [];
           const sqlColumnTypes: T.SQL[] = [];
           const allSQLColumns: T.SQL[] = [];
+
           const inputData: Object[] =
             input[inflection.patchField(inflection.tableFieldName(table))];
 

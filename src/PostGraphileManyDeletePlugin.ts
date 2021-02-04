@@ -4,7 +4,10 @@ import { GraphQLList } from "graphql";
 const debug = debugFactory("graphile-build-pg");
 import { createTypeWithoutNestedInputTypes } from "./utils";
 
-const PostGraphileManyDeletePlugin: T.Plugin = (builder: T.SchemaBuilder) => {
+const PostGraphileManyDeletePlugin: T.Plugin = (
+  builder,
+  options: T.PgOptions
+) => {
   /**
    * Add a hook to create the new root level delete mutation
    */
@@ -99,15 +102,24 @@ const PostGraphileManyDeletePlugin: T.Plugin = (builder: T.SchemaBuilder) => {
       }
 
       const tableTypeName = namedType.name;
+      const pluralTableTypeName = inflection.pluralize(tableTypeName);
+
       const uniqueConstraints = table.constraints.filter(
         (con) => con.type === "p"
       );
 
+      const prefix = options.multipleMutationsPluginOptions?.prefix;
+      const isPrefixProvided = !!prefix;
+
+      const baseDeletePayloadName = `Delete${pluralTableTypeName}Payload`;
+
       // Setup and add the GraphQL Payload Type
       const newPayloadHookType = GraphQLObjectType;
       const newPayloadHookSpec = {
-        name: inflection.pluralize(inflection.deletePayloadType(table)),
-        description: `The output of our delete \`${tableTypeName}\` mutation.`,
+        name: isPrefixProvided
+          ? `${prefix}${baseDeletePayloadName}`
+          : baseDeletePayloadName,
+        description: `The output of our delete \`${pluralTableTypeName}\` mutation.`,
         fields: ({ fieldWithHooks }) => {
           const tableName = inflection.tableFieldName(table);
           const deletedNodeIdFieldName = inflection.deletedNodeId(table);
@@ -125,7 +137,7 @@ const PostGraphileManyDeletePlugin: T.Plugin = (builder: T.SchemaBuilder) => {
                 fieldWithHooks,
                 tableName,
                 {
-                  description: `The \`${tableTypeName}\` that was deleted by this mutation.`,
+                  description: `The \`${pluralTableTypeName}\` that was deleted by this mutation.`,
                   type: new GraphQLList(new GraphQLNonNull(tableType)),
                 },
                 {},
@@ -184,7 +196,7 @@ const PostGraphileManyDeletePlugin: T.Plugin = (builder: T.SchemaBuilder) => {
       );
       if (!PayloadType) {
         throw new Error(
-          `Failed to determine payload type on the mn\`${tableTypeName}\` mutation`
+          `Failed to determine payload type on the \`${pluralTableTypeName}\` mutation`
         );
       }
       // Setup and add GQL Input Types for "Unique Constraint" based updates
@@ -201,24 +213,36 @@ const PostGraphileManyDeletePlugin: T.Plugin = (builder: T.SchemaBuilder) => {
         }
         if (keys.some((key) => omit(key, "read"))) return;
 
-        const fieldName = inflection.pluralize(
-          inflection.camelCase(inflection.deleteByKeys(keys, table, constraint))
+        const baseFieldName = inflection.deleteManyByKeys(
+          keys,
+          table,
+          constraint
         );
+        const fieldName = isPrefixProvided
+          ? `${prefix}${inflection.upperCamelCase(baseFieldName)}`
+          : inflection.camelCase(baseFieldName);
 
         const newInputHookType = GraphQLInputObjectType;
+
+        const baseNewPatchTypeName = `DeleteMulti${pluralTableTypeName}Input`;
+        const newPatchType = createTypeWithoutNestedInputTypes({
+          inputType: tablePatch,
+          name: isPrefixProvided
+            ? `${prefix}${baseNewPatchTypeName}`
+            : baseNewPatchTypeName,
+        });
+
+        const baseInputName = `${fieldName}Input`;
 
         const patchName = inflection.patchField(
           inflection.tableFieldName(table)
         );
 
-        const newPatchType = createTypeWithoutNestedInputTypes(
-          tablePatch,
-          `MultiDelete${tablePatch.name}`
-        );
-
         const newInputHookSpec = {
-          name: `${inflection.upperCamelCase(fieldName)}Input`,
-          description: `All input for the delete \`${fieldName}\` mutation.`,
+          name: isPrefixProvided
+            ? baseInputName
+            : inflection.upperCamelCase(baseInputName),
+          description: `All input for the delete \`${pluralTableTypeName}\` mutation.`,
           fields: Object.assign(
             {
               clientMutationId: {
@@ -323,6 +347,7 @@ const PostGraphileManyDeletePlugin: T.Plugin = (builder: T.SchemaBuilder) => {
           const sqlColumns: T.SQL[] = [];
           const inputData: Object[] =
             input[inflection.patchField(inflection.tableFieldName(table))];
+
           if (!inputData || inputData.length === 0) return null;
           const sqlValues: T.SQL[][] = Array(inputData.length).fill([]);
           let hasConstraintValue = true;

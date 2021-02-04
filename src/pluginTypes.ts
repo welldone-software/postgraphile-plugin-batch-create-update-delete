@@ -7,7 +7,7 @@ import gql, {
 import sql, { SQL } from "pg-sql2";
 import { PgClass, PgAttribute, omit } from "graphile-build-pg";
 import pgField from "graphile-build-pg/node8plus/plugins/pgField";
-import { Plugin, SchemaBuilder } from "graphile-build";
+import { Plugin, SchemaBuilder, Options } from "graphile-build";
 import { parseResolveInfo } from "graphql-parse-resolve-info";
 
 /**
@@ -87,6 +87,11 @@ export interface Build {
 interface MultipleMutationsPluginOptions {
   enabled?: boolean;
   ignore?: Array<string>;
+  prefix?: string;
+}
+
+interface PgOptions extends Options {
+  multipleMutationsPluginOptions?: MultipleMutationsPluginOptions;
 }
 
 export {
@@ -99,4 +104,5 @@ export {
   GraphQLType,
   GraphQLInputObjectType,
   MultipleMutationsPluginOptions,
+  PgOptions,
 };

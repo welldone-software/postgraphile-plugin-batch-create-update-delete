@@ -3,7 +3,10 @@ import debugFactory from "debug";
 const debug = debugFactory("graphile-build-pg");
 import { createTypeWithoutNestedInputTypes } from "./utils";
 
-const PostGraphileManyCreatePlugin: T.Plugin = (builder: T.SchemaBuilder) => {
+const PostGraphileManyCreatePlugin: T.Plugin = (
+  builder,
+  options: T.PgOptions
+) => {
   /**
    * Add a hook to create the new root level create mutation
    */
@@ -97,21 +100,33 @@ const PostGraphileManyCreatePlugin: T.Plugin = (builder: T.SchemaBuilder) => {
         return;
       }
       const tableTypeName = inflection.tableType(table);
+      const pluralTableTypeName = inflection.pluralize(tableTypeName);
 
-      const newInputType = createTypeWithoutNestedInputTypes(TableInput);
+      const prefix = options.multipleMutationsPluginOptions?.prefix;
+      const isPrefixProvided = !!prefix;
+
+      const baseNewInputTypeName = `Multi${pluralTableTypeName}Input`;
+      const newInputType = createTypeWithoutNestedInputTypes({
+        inputType: TableInput,
+        name: isPrefixProvided
+          ? `${prefix}${baseNewInputTypeName}`
+          : baseNewInputTypeName,
+      });
+
+      const baseInputName = `Create${pluralTableTypeName}Input`;
 
       // Setup args for the input type
       const newInputHookType = GraphQLInputObjectType;
       const newInputHookSpec = {
-        name: inflection.camelCase(inflection.createInputType(table)),
-        description: `All input for the create mn\`${tableTypeName}\` mutation.`,
+        name: isPrefixProvided ? `${prefix}${baseInputName}` : baseInputName,
+        description: `All input for the create \`${pluralTableTypeName}\` mutation.`,
         fields: () => ({
           clientMutationId: {
             description:
               "An arbitrary string value with no semantic meaning. Will be included in the payload verbatim. May be used to track mutations by the client.",
             type: GraphQLString,
           },
-          [inflection.pluralize(inflection.camelCase(tableTypeName))]: {
+          [inflection.camelCase(pluralTableTypeName)]: {
             description: `The one or many \`${tableTypeName}\` to be created by this mutation.`,
             type: new GraphQLList(new GraphQLNonNull(newInputType)),
           },
@@ -137,9 +152,13 @@ const PostGraphileManyCreatePlugin: T.Plugin = (builder: T.SchemaBuilder) => {
 
       // Setup args for payload type
       const newPayloadHookType = GraphQLObjectType;
+      const basePayloadName = `Create${pluralTableTypeName}Payload`;
+
       const newPayloadHookSpec = {
-        name: inflection.pluralize(inflection.createPayloadType(table)),
-        description: `The output of our many create \`${tableTypeName}\` mutation.`,
+        name: isPrefixProvided
+          ? `${prefix}${basePayloadName}`
+          : basePayloadName,
+        description: `The output of our many create \`${pluralTableTypeName}\` mutation.`,
         fields: ({ fieldWithHooks }) => {
           const tableName = inflection.tableFieldName(table);
           return {
@@ -153,7 +172,7 @@ const PostGraphileManyCreatePlugin: T.Plugin = (builder: T.SchemaBuilder) => {
               fieldWithHooks,
               tableName,
               {
-                description: `The \`${tableTypeName}\` that was created by this mutation.`,
+                description: `The \`${pluralTableTypeName}\` that was created by this mutation.`,
                 type: new GraphQLList(new GraphQLNonNull(tableType)),
               },
               {
@@ -183,9 +202,13 @@ const PostGraphileManyCreatePlugin: T.Plugin = (builder: T.SchemaBuilder) => {
         newPayloadHookScope
       );
 
-      const fieldName = inflection.pluralize(
-        inflection.camelCase(inflection.createField(table))
-      );
+      const baseFieldName = inflection.createField(table);
+
+      const fieldName = isPrefixProvided
+        ? `${prefix}${inflection.pluralize(
+            inflection.upperCamelCase(baseFieldName)
+          )}`
+        : inflection.pluralize(inflection.camelCase(baseFieldName));
 
       function newFieldWithHooks(): T.FieldWithHooksFunction {
         return fieldWithHooks(
@@ -248,13 +271,11 @@ const PostGraphileManyCreatePlugin: T.Plugin = (builder: T.SchemaBuilder) => {
           resolveInfo.rootValue
         );
 
+        const baseInputPropName = inflection.tableFieldName(table);
+
         const sqlColumns: T.SQL[] = [];
         const inputData: Object[] =
-          input[
-            inflection.pluralize(
-              inflection.camelCase(inflection.tableFieldName(table))
-            )
-          ];
+          input[inflection.pluralize(inflection.camelCase(baseInputPropName))];
         if (!inputData || inputData.length === 0) return null;
         const sqlValues: T.SQL[][] = Array(inputData.length).fill([]);
 

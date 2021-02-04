@@ -1,11 +1,15 @@
 import { omitBy } from "lodash";
 import { GraphQLInputObjectType } from "./pluginTypes";
 
-export const createTypeWithoutNestedInputTypes = (
-  inputType: GraphQLInputObjectType,
-  name?: string,
-  description?: string
-) => {
+export const createTypeWithoutNestedInputTypes = ({
+  inputType,
+  name,
+  description,
+}: {
+  inputType: GraphQLInputObjectType;
+  name?: string;
+  description?: string;
+}) => {
   const fieldsWithoutNestedInputTypes = omitBy(inputType.getFields(), (field) =>
     GraphQLInputObjectType.prototype.isPrototypeOf(field.type)
   );
